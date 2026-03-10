@@ -49,7 +49,7 @@ Winter, B., & Matlock, T. (2013). Making judgments based on similarity and proxi
 #| label: preprocessing
 
 # Load our datasets
-sim <- read_csv("../data/linguistic_similarity.csv")
+sim <- read_csv("../../data/linguistic_similarity.csv")
 sim
 ```
 
@@ -70,6 +70,10 @@ sim %>%
   theme_minimal() +
   scale_fill_manual(values=c("yellow", "purple")) +
   labs(y = "Density", fill = "Semantic categories")
+
+# NOTES AFTER
+
+# Distribution: Normalish but bound to zero and some maximal distance
 ```
 
 ```{r}
@@ -131,6 +135,8 @@ my_priors <- c(prior(normal(78, 40), class = 'Intercept'), # the mean and sd of 
                  prior(normal(0, 10), class = 'sigma')) # what to put here? I'll just keep it the same
                  
 # This is from wide_normal
+
+
 
 ```
 
@@ -194,7 +200,7 @@ xmdl %>%
   # now we plot
   ggplot(aes(x = Distance, fill = Sem)) +
     geom_density() +
-    facet_wrap(Sem ~ .)
+    facet_wrap(Sem ~ ., ncol = 1)
 ```
 
 After seeing the data the very diffuse priors have given way to much more narrow and shifted posteriors.
@@ -229,6 +235,7 @@ pp_check(xmdl, ndraws = 100)
 
 # But I don't know how to interpret this - how much difference is a "problem"?
 
+# probability distribution - read!!
 ```
 
 # OPTIONAL (F) fix the assumption violation
@@ -240,6 +247,7 @@ Can you fix the mismatch between the observed data (dark blue line) and the simu
 
 # YOUR CODE HERE
 
+# better when distance is turned into square root
 ```
 
 # OPTIONAL (G) specify priors that will reduce the effect of SEM to zero

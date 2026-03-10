@@ -1,0 +1,252 @@
+---
+title: "session07 - homework"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: false
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, lme4, brms, bayestestR)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+# options to increase efficiency of brms models (optional)
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+library(tidybayes) # I seemed to need this too
+library(see) # This too
+```
+
+### Introduction to the problem
+
+We will be working with Quantese again, see `01_exercise.qmd` and the other data resources for a refresher.
+
+```{r}
+#| label: load-quantese
+
+quantese <- read_csv("../../data/quantese_naming_sim.csv") 
+# add log-transformed reaction time
+quantese <- quantese |> 
+  mutate(log_rt = log(rt))
+
+# have a look
+quantese
+
+```
+
+In an earlier homework, we have assessed the following hypothesis:
+
+*"We hypothesize that log-transformed reaction times are affected by lexical frequency"*
+
+We tried to run the following model that included an appropriate random effect structure but it did not converge with `lme4`:
+
+```{r}
+#| label: lmer_quantese
+
+# formulate the corresponding LMER
+quant_lmer <- lmer(log_rt ~ log_frequency +
+                     (1 + log_frequency | PartID) +
+                     (1 | ItemID), 
+                    data = quantese)
+# your receive a warning: "boundary (singular) fit: see help('isSingular')"
+
+```
+
+Now we will re-run this model within the Bayesian framework:
+
+### (A) Specify priors
+
+Check which priors this model needs and specify weakly informative priors.
+
+Remember that weakly informative priors are priors that do not bias the posteriors in any direction, but reasonably constrain the parameter space, i.e. only reasonable values are assumed.
+
+For priors of class `Intercept` and `b`, constrain the parameter space with a wide normal distribution.
+
+```{r}
+#| label: get_prior
+
+# Don't I need to first visualize the log_rt distribution, e.g. by making a density plot of it?
+
+quantese %>%
+  ggplot(aes(x = log_rt)) +
+  geom_density(color = "#D685D5", fill = "#E3BAE2") + # important to have nice colors
+  theme_minimal()
+
+# The distributions are somewhat skewed towards the left with a heavy right tale
+
+mdl_formula <- bf(log_rt ~ log_frequency)
+get_prior(mdl_formula, quantese)
+
+# Is this wrong? Maybe doesn't make sense if there isn't a perfect normal distribution?
+
+min(quantese$log_rt) # 5.9
+max(quantese$log_rt) # 7.8
+
+# Should the distribution then allow all values between 5.9 and 7.8?
+# Would we then expect values around 6.85 to be the most common, since it's in the middle of 5.9 and 7.8?
+# With values that are lower or higher becoming less common?
+# On the density plot, it seems that around 6.35 is the most common
+plot_normal(mean = 6.85, sigma = 2) # Should I base this on the density plot or no? It doesnt't do that in 06_homework, I think, so here it's not
+# Why does this not work now, it did before??
+# The 2 is kind of random
+
+# Specify weakly informative priors
+
+# `Intercept` reflects the average log_rt measure and `log_frequency` reflects the estimated difference between the Intercept and ?? _____ ??
+
+my_priors <- c(prior(normal(6.85, 2), class = 'Intercept'), # 6.85 is in the middle of the min and max log_rt
+               # I'm not really sure where the second number is supposed to come from
+               prior(normal(0, 2), class = 'b', coef = 'log_frequency')) # 0 because we "pretend to believe" that log_frequency doesn't have an effect at all? 
+               # # Same here with the second number - is it always the same as the second one above?
+
+```
+
+We can also now get used to specifying priors for classes `sd` and `cor`. Priors of class `sd` are priors for the variance associated with our random effects. You see here 2 `sd` priors for group `ItemID`. The first one is just a generic prior for all `ItemID` coefficients and the second one with the `coef = Intercept` stands for the random intercept variation between items. Similarly for group `PartID`, we have 3 priors. The first one is again just a generic prior for all `PartID` coefficients. The second one with the `coef = Intercept` stands for the random intercept variation between participants. And the last one with the `coef = log_frequency` stands for the random slope variation between participants for the predictor `log_frequency`. How do we specify these priors. We have usually no idea what to expect from these parameters, so we here also specify very diffuse priors centered on zero. We pick a cauchy distribution (remember? super squashed normal distributions) because they have thick tails. Let's make them super diffuse and pick a `sd = 3` for both items and participants.
+
+```{r}
+#| label: add_sd_priors
+
+# add weakly informative priors for sd
+my_priors <- c(my_priors, 
+               prior(cauchy(0, 3), class = 'sd', group = 'ItemID'),
+               prior(cauchy(0, 3), class = 'sd', group = 'PartID'))
+
+```
+
+And finally, if your model as random slopes, they have by default a correlation parameter for intercept and slope. We are not getting into the math here and will follow advice from smart people. We use Lewandowski-Kurowicka-Joe priors (shape = 1): `lkj(1)`. Specifying this prior for random slope models actually helps a lot with the fitting procedure.
+
+```{r}
+#| label: add_cor_priors
+
+# add weakly informative priors for cor
+my_priors <- c(my_priors, 
+               prior(lkj(1), class = 'cor'))
+
+```
+
+```{r}
+# EXTRA
+
+# I decided to try this from 06_homework
+
+xmdl_prior <- brm(log_rt ~ log_frequency +
+            (1 + log_frequency | PartID) +
+            (1 + log_frequency | ItemID),
+            family = gaussian(),
+            prior = my_priors,
+            sample_prior = "only",
+            data = quantese,
+            seed = 42)
+
+xmdl_prior %>% 
+  # first extract the samples
+  spread_draws(b_Intercept, b_log_frequency) %>% 
+  # Create two columns that represent the two categories
+  mutate(log_rt = b_Intercept,
+         log_frequency = b_Intercept + b_log_frequency) %>% 
+  # and then bring into a long format like the data
+  select(log_rt, log_frequency) %>% 
+  pivot_longer(everything(), names_to = "log_frequency", values_to = "log_rt") %>% 
+  # plot
+  ggplot(aes(x = log_rt)) +
+  geom_density(color = "#F54927", fill = "#F56F53") +
+  theme_minimal()
+
+# I'm not doing facet_wrap since it's not categorical, but is this right? Shouldn't log_frequency come in here somehow?
+```
+
+### (B) Run model
+
+Now run the model with 4 chains, 1000 warm-up and 1000 post-warm-up samples per chain. Check that chains are reasonably mixed and that sampling yielded a sufficient effective sample size. If not address the issues appropriately (check slides again).
+
+```{r}
+#| label: model_quant
+
+# if the model takes way too long to sample (more than 5-10 mins), use the following subset
+# quantese_sub <- quantese |> 
+#   filter(PartID %in% c("01","02","03","04",
+#                        "05","06","07","08"))
+
+normal_mdl <- brm(log_rt ~ log_frequency +
+                  (1 + log_frequency | PartID) +
+                  (1 + log_frequency | ItemID),
+                  family = gaussian(),
+                  prior = my_priors,
+                  data = quantese,
+                  chains = 4, cores = 4,
+                  iter = 2000, warmup = 1000,
+                  thin = 1, seed = 42) # I don't know if I need this
+
+normal_mdl
+
+mcmc_plot(normal_mdl, type = "trace") # This looks fine generally, I don't know if no 2-3 in column 1 are a bit sketchy
+# Also, what are the reds?
+```
+
+### (C) Plot posterior predictions
+
+Find a way to extract posterior samples from the model for the `Intercept` and the `log_frequency` coefficient and plot the predicted posterior mean linear model alongside its 95% Credible Intervals. There are many different ways to get there.
+
+```{r}
+#| label: plot_predictions
+
+normal_mdl %>% 
+  # first extract the samples
+  spread_draws(b_Intercept, b_log_frequency) %>% 
+  # Create two columns that represent the two categories
+  mutate(log_rt = b_Intercept,
+         log_frequency = b_Intercept + b_log_frequency) %>% 
+  # and then bring into a long format like the data
+  select(log_rt, log_frequency) %>% 
+  pivot_longer(everything(), names_to = "log_frequency", values_to = "log_rt") %>% 
+  # plot
+  ggplot(aes(x = log_rt)) +
+  geom_density(color = "#538CF5", fill = "#91B6FA") +
+  theme_minimal()
+  
+# I'm not doing facet_wrap since it's not categorical, but is this right? Shouldn't log_frequency come in here somehow?
+
+# There is some stuff here that might not make sense (we have a continuous variable here, not categorical like in 06_homework) + I have to add 95% Credible Intervals - maybe find it another place? OSF maybe… A bit difficult when the model itself doesn't run correctly
+
+# Based on from 06_homework_solutions:
+#xmdl |> 
+  # first extract the samples
+  #spread_draws(b_Intercept, b_SemSimilar) |> 
+  # Create two columns that represent the two categories
+  #mutate(Different = b_Intercept,
+  #       Similar = b_Intercept + b_SemSimilar) |> 
+  # and then bring into a long format like the data
+  #select(Different, Similar) |> 
+  #pivot_longer(everything(), names_to = "Sem", values_to = "Distance") |> 
+  # plot
+  #ggplot(aes(x = Distance, fill = Sem)) +
+  #  geom_density() +
+  #  facet_wrap(Sem~., ncol = 1)
+```
+
+P.S. I didn't have much time to do this and suddenly, I had some issues running code that were completely ok before - I will have to look at this better
