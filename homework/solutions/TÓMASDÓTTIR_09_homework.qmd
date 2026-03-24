@@ -1,0 +1,253 @@
+---
+title: "session09 - exercises"
+format: html
+editor: visual
+date: 2025-07-17
+author: Timo Roettger
+execute:
+  error: false
+  warning: false
+  message: false
+  cache: false
+bibliography: ../resources/bibliography.bib
+---
+
+# Preamble: Loading packages and configuration
+
+```{r}
+#| label: data_and_libraries
+#| echo: false
+
+# just run this code chunk
+# function to ignoring the setting of the relative path below when knitting
+run_if_not_knitting <- function(expr) {
+  if (!isTRUE(getOption("knitr.in.progress"))) {
+    eval(expr)
+  }
+}
+
+# nifty code using the pacman package
+# it checks if the packages specified below are installed, if not, they will be installed, if yes, they will be loaded
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(rstudioapi, tidyverse, lme4)
+
+# set the current working directory to the one where this file is
+run_if_not_knitting(current_working_dir <- dirname(rstudioapi::getActiveDocumentContext()$path))
+run_if_not_knitting(setwd(current_working_dir))
+
+```
+
+# Introduction
+
+The main **learning goals** of this week's practical parts are:
+
+-   getting an intuition about the gap between verbal hypotheses and formal hypotheses
+
+# The data
+
+In this dataset, we will be analyzing data from @kilpatrick2023random:
+
+In a nutshell, the authors were interested in whether there is a relationship between the form of a word and its meaning by looking at Japanese Pokemon names.
+
+Let's have a look at the data:
+
+```{r}
+#| label: data
+
+# Load in the dataset and already remove irrelevant stuff:
+pokemon <- read_csv('../../data/Japanese_Pokemon_simplified.csv') |> 
+  select(-`Sum of values`, -Checksum)
+
+# check data set:
+pokemon
+```
+
+What you see here are the following variables:
+
+Variables:
+
+`Designation`: source of Pokemon name. Official = the official names of Japanese Pokemon; Elicited = elicited names from naive participants.
+
+(`pokemonname`: Pokemon name in Japanese) removed in simplified data file
+
+`Output`: Pokemon name in transcribed form
+
+`Length`: Amount of phones in name
+
+`Evolution`: Evolution stage of Pokemons: 1 = pre-evolution; 2 = post-evolution, NA = do not evolve
+
+`f` = amount of /f/ sounds in name
+
+`T` = amount of /T/ sounds in name
+
+...
+
+and many more different sounds.
+
+Now imagine researchers want to use this data set to *test* the following hypothesis:
+
+*The evolution stage of a Pokemon is reflected in aspects of its Japanese name*
+
+# Exercise
+
+## A: Preregister your analysis
+
+Take the hypothesis and what you know about the data set and its structure to predict a very specific relationship that you can test. You are allowed to look at the dataset, but do not look at concrete relationships that might be a manifestation of the hypothesis.
+
+Prediction: I predict that the Evolution affects the length of the name; the higher the Evolution, the longer the name.
+
+## B: Run your preregistered analysis
+
+Run the preregistered analysis made in (A) above and interpret your results relative to the hypothesis.
+
+```{r}
+pokemon$Evolution <- as.factor(pokemon$Evolution)
+contrasts(pokemon$Evolution) <- contr.sum(2)
+```
+
+```{r}
+# Define the formula
+pok_formula <- bf(Length ~ Evolution) # No random effects since there is only one measurement per participant/"item" (?)
+
+# Get priors
+get_prior(pok_formula, pokemon)
+
+my_priors <- c(prior(normal(10, 30), class = "Intercept"), 
+               prior(normal(0, 30), class = "b"))
+```
+
+```{r}
+pok_mdl <- brm(pok_formula,
+                  family = gaussian(),
+                  prior = my_priors,
+                  data = pokemon,
+                  chains = 4,
+                  cores = 4, 
+                  iter = 2000,
+                  warmup = 1000,
+                  thin = 1,
+                  seed = 28)
+
+pok_mdl
+# Intercept is different when you contrast code
+```
+
+Seems that the bigger the Evolution, the shorter the name. My prediction was not borne out.
+
+```{r}
+pp_check(pok_mdl, ndraws = 50)
+```
+
+```{r}
+mcmc_plot(pok_mdl, type = "trace") # looks good, i.e. like a caterpillar
+mcmc_dens_overlay(pok_mdl) # not so good?
+pok_mdl # rhat and ESS look all good
+```
+
+## C: Show contradicting results
+
+Now explore the data and find two alternative ways to test the research hypothesis that yield convincing results that go in opposite directions based of your findings in (A). Justify all your choices verbally after the fact.
+
+Clarification question: by "the research hypothesis", do you mean the vague one in the beginning (that some aspects of the name have an effect), or the specific one I chose in A? I'm gonna go with the first one, so now I'll choose some other aspect of the name to try and find effects in the opposite direction of A.
+
+A findings: The bigger the Evolution, the shorter the name.
+
+### 1 
+
+Now I am gonna check if the size (?) of the Evolution affects the number of i-s in the name.
+
+```{r}
+# Define the formula
+pok_formula_2 <- bf(i ~ Evolution)
+
+my_priors_2 <- c(prior(normal(3, 8), class = "Intercept"), # because it ranges from 0-7
+               prior(normal(0, 8), class = "b"))
+```
+
+```{r}
+pok_mdl_2 <- brm(pok_formula_2,
+                  family = poisson(),
+                  prior = my_priors_2,
+                  data = pokemon,
+                  chains = 4,
+                  cores = 4, 
+                  iter = 2000,
+                  warmup = 1000,
+                  thin = 1,
+                  seed = 28)
+
+pok_mdl_2
+```
+
+I think that this says that the Evolution has no visible effect on how many i-s there are in the name. So the same as A, or??
+
+```{r}
+pp_check(pok_mdl_2, ndraws = 50)
+```
+
+Looks weird but still the dark and light lines are kinda the same? It looked ridiculous using gaussian so I tried changing it to poisson (tip from the internet) which looks better
+
+```{r}
+mcmc_plot(pok_mdl_2, type = "trace") # looks good, i.e. like a caterpillar
+mcmc_dens_overlay(pok_mdl_2) # good?
+pok_mdl_2 # rhat and ESS look all good
+```
+
+### 2
+
+Now I am gonna check if the size (?) of the Evolution affects the number of a-s in the name.
+
+```{r}
+# Define the formula
+pok_formula_3 <- bf(a ~ Evolution)
+
+my_priors_3 <- c(prior(normal(3, 6), class = "Intercept"), # because it ranges from 0-6
+               prior(normal(0, 6), class = "b"))
+```
+
+```{r}
+pok_mdl_3 <- brm(pok_formula_3,
+                  family = gaussian(),
+                  prior = my_priors_3,
+                  data = pokemon,
+                  chains = 4,
+                  cores = 4, 
+                  iter = 2000,
+                  warmup = 1000,
+                  thin = 1,
+                  seed = 28)
+
+pok_mdl_3
+```
+
+Does this say that lower Evolution have fewer a-s in the name than higher Evolution pokemons? So contradicts A, or??
+
+```{r}
+pp_check(pok_mdl_3, ndraws = 50)
+```
+
+Still looks weird but still the dark and light lines are kinda the same?
+
+```{r}
+mcmc_plot(pok_mdl_3, type = "trace") # looks good, i.e. like a caterpillar
+mcmc_dens_overlay(pok_mdl_3) # good?
+pok_mdl_2 # rhat and ESS look all good
+```
+For both 1 and 2: I feel like I am missing something here, maybe some plots or something to grasp the model results better. Maybe just a whole step? I'm having a problem with getting the big picture.
+
+## D: Researcher degrees of freedom
+
+Note down all dimensions of researcher degrees of freedom that make the mapping of the hypothesis onto your data analysis vague. How many possible combinations can you think of?
+
+This hypothesis
+
+*The evolution stage of a Pokemon is reflected in aspects of its Japanese name*
+
+is very vague. The core problem word is aspects, as it isn't specificed *which aspects* the evolution stage might affect. E.g., is it the length of the name or it's "content", such as which sounds/letters appear in it? For the sounds, for example, we have dozens of different sounds and in theory, maybe some of them have a "relationship" with the Evolution stage.
+
+# References
+
+<!-- References will auto-populate in the refs div below -->
+
+::: {#refs}
+:::
